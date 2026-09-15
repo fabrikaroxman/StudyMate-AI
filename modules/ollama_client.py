@@ -4,7 +4,7 @@ import requests
 
 DEFAULT_BASE_URL = "http://localhost:11434"
 DEFAULT_MODEL = "gemma3:4b"
-GROQ_MODEL = "llama-3.1-8b-instant"
+GROQ_MODEL = "openai/gpt-oss-20b"
 
 
 class OllamaError(RuntimeError):
