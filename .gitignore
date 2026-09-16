@@ -49,3 +49,12 @@ app.*.map.json
 
 # Local backup files
 *.bak
+
+.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.streamlit/secrets.toml
