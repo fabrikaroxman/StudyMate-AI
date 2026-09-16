@@ -1,5 +1,6 @@
 import json
 import os
+import time
 import requests
 
 DEFAULT_BASE_URL = "http://localhost:11434"
@@ -52,50 +53,93 @@ def _groq_generate(prompt, temperature=0.2, json_mode=False):
             },
         ],
         "temperature": temperature,
-        "max_tokens": 2048,
+        "max_tokens": 1200,
     }
 
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
 
-    try:
-        response = requests.post(
-            url,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=90,
-        )
+    # Retry automatically if Groq temporarily rate-limits the request.
+    max_retries = 4
 
-        response.raise_for_status()
-        data = response.json()
-
-        return data["choices"][0]["message"]["content"].strip()
-
-    except requests.exceptions.Timeout as exc:
-        raise OllamaError(
-            "Cloud AI took too long to respond."
-        ) from exc
-
-    except requests.exceptions.ConnectionError as exc:
-        raise OllamaError(
-            "Could not connect to the cloud AI service."
-        ) from exc
-
-    except requests.exceptions.HTTPError as exc:
+    for attempt in range(max_retries):
         try:
-            message = response.json()["error"]["message"]
-        except Exception:
-            message = f"Cloud AI returned HTTP {response.status_code}."
+            response = requests.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=90,
+            )
 
-        raise OllamaError(message) from exc
+            if response.status_code == 429:
+                if attempt == max_retries - 1:
+                    try:
+                        message = response.json()["error"]["message"]
+                    except Exception:
+                        message = "Groq rate limit reached."
 
-    except (KeyError, IndexError, TypeError) as exc:
-        raise OllamaError(
-            "Cloud AI returned an unexpected response."
-        ) from exc
+                    raise OllamaError(
+                        "AI service is temporarily busy because the "
+                        "rate limit was reached. Please wait about a "
+                        "minute and try again. Details: " + message
+                    )
+
+                retry_after = response.headers.get("retry-after")
+
+                try:
+                    wait_seconds = float(retry_after)
+                except (TypeError, ValueError):
+                    wait_seconds = 15 * (attempt + 1)
+
+                wait_seconds = max(5, min(wait_seconds, 60))
+
+                time.sleep(wait_seconds)
+                continue
+
+            response.raise_for_status()
+            data = response.json()
+
+            return data["choices"][0]["message"]["content"].strip()
+
+        except requests.exceptions.Timeout as exc:
+            if attempt < max_retries - 1:
+                time.sleep(5)
+                continue
+
+            raise OllamaError(
+                "Cloud AI took too long to respond. Please try again."
+            ) from exc
+
+        except requests.exceptions.ConnectionError as exc:
+            if attempt < max_retries - 1:
+                time.sleep(5)
+                continue
+
+            raise OllamaError(
+                "Could not connect to the cloud AI service."
+            ) from exc
+
+        except requests.exceptions.HTTPError as exc:
+            try:
+                message = response.json()["error"]["message"]
+            except Exception:
+                message = (
+                    f"Cloud AI returned HTTP {response.status_code}."
+                )
+
+            raise OllamaError(message) from exc
+
+        except (KeyError, IndexError, TypeError) as exc:
+            raise OllamaError(
+                "Cloud AI returned an unexpected response."
+            ) from exc
+
+    raise OllamaError(
+        "Cloud AI could not complete the request. Please try again."
+    )
 
 
 def _ollama_post(path, payload, base_url, timeout=180):
@@ -133,7 +177,7 @@ def _ollama_post(path, payload, base_url, timeout=180):
 
 
 def is_ollama_running(base_url=DEFAULT_BASE_URL):
-    # On Streamlit Cloud, Groq becomes the AI backend.
+    # Streamlit Cloud uses Groq when a Groq key is configured.
     if using_cloud_ai():
         return True
 
