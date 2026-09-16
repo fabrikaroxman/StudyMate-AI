@@ -208,22 +208,10 @@ init_state()
 
 st.markdown(
     """
-    <div class="hero">
-        <div class="hero-title">
-            🎓 StudyMate AI
-        </div>
-
-        <div class="hero-subtitle">
-            Intelligent Personal Learning Assistant
-        </div>
-
-        <div class="hero-description">
-            Upload your study PDF and transform it into
-            answers, summaries, quizzes, flashcards and
-            personalized study plans with AI.
-        </div>
-    </div>
-    """,
+<div class="hero">
+<div class="hero-title">🎓 StudyMate AI</div>
+</div>
+""",
     unsafe_allow_html=True,
 )
 
