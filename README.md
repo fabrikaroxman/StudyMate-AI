@@ -112,6 +112,21 @@ Anyone with the link uses your Groq quota. If the app runs out of memory on
 the free tier, check the app logs: `sentence-transformers` and `faiss-cpu`
 are the heaviest dependencies.
 
+## Large PDFs (hundreds of pages)
+
+- **Ask AI** searches every page. Answers show page numbers, and a question
+  that names a page ("what is on page 450?", "pages 10-12") reads those pages
+  directly.
+- **Summary, Topics, Quiz, Flashcards and Study Plan** cannot send 700 pages
+  to the AI at once, so the document is split into equal parts and the most
+  representative passage of each part is used. Every region of the book
+  contributes, and the AI request stays the same size, so it stays fast.
+- For PDFs over 30 pages a **Coverage** option (Fast / Balanced / Thorough)
+  lets you read more of the document for Summary and Topics at the cost of
+  more AI calls and time.
+- Building the search index shows a progress bar. It is the slowest step for
+  big PDFs because every chunk is embedded once per upload.
+
 ## Running the tests
 
 The tests cover text chunking and quiz validation and need no model, no

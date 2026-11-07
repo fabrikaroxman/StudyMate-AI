@@ -1,8 +1,14 @@
 import hashlib
 import streamlit as st
 
-from modules.pdf_reader import extract_pdf, split_text
-from modules.vector_store import build_index, retrieve
+from modules.pdf_reader import (
+    extract_pdf_pages,
+    pages_to_text,
+    split_pages,
+    find_page_references,
+)
+from modules.vector_store import build_index, retrieve, get_embeddings
+from modules.overview import build_overview, page_label
 from modules.ollama_client import (
     DEFAULT_BASE_URL,
     DEFAULT_MODEL,
@@ -155,6 +161,9 @@ def init_state():
         "text": None,
         "pages": 0,
         "chunks": None,
+        "chunk_pages": None,
+        "page_texts": None,
+        "embeddings": None,
         "index": None,
         "quiz": None,
         "quiz_submitted": False,
@@ -180,22 +189,30 @@ def reset_document_outputs():
     st.session_state.flashcards = None
 
 
-def context_for_general_task(text, max_chars=18000):
-    if len(text) <= max_chars:
-        return text
+# How much of the document the summary / topic analysis reads.
+# More text covers more of a big PDF but takes longer.
+COVERAGE_CHARS = {
+    "Fast": 18000,
+    "Balanced": 36000,
+    "Thorough": 60000,
+}
 
-    third = max_chars // 3
-    mid = len(text) // 2
+# Text taken from a page the student names directly ("page 450").
+PAGE_CONTEXT_CHARS = 2500
 
-    return (
-        text[:third]
-        + "\n\n[...middle excerpt...]\n\n"
-        + text[
-            max(0, mid - third // 2):
-            mid + third // 2
-        ]
-        + "\n\n[...final excerpt...]\n\n"
-        + text[-third:]
+
+def document_overview(max_chars):
+    """
+    Study material of about max_chars characters that covers the WHOLE
+    document: representative passages from every part, labelled by page.
+    A document that already fits is returned unchanged.
+    """
+    return build_overview(
+        st.session_state.text,
+        st.session_state.chunks,
+        st.session_state.chunk_pages,
+        st.session_state.embeddings,
+        max_chars,
     )
 
 
@@ -236,32 +253,50 @@ if uploaded is not None:
 
         try:
 
-            with st.spinner(
-                "Reading PDF and building AI search index..."
-            ):
+            with st.spinner("Reading PDF..."):
 
-                text, pages = extract_pdf(uploaded)
+                page_list, pages = extract_pdf_pages(uploaded)
 
-                if not text.strip():
+            if not page_list:
 
-                    st.error(
-                        "No selectable text was found in this PDF. "
-                        "Please upload a text-based PDF."
-                    )
+                st.error(
+                    "No selectable text was found in this PDF. "
+                    "Please upload a text-based PDF."
+                )
 
-                    st.stop()
+                st.stop()
 
-                chunks = split_text(text)
-                index = build_index(chunks)
+            chunks, chunk_pages = split_pages(page_list)
 
-                st.session_state.file_hash = current_hash
-                st.session_state.file_name = uploaded.name
-                st.session_state.text = text
-                st.session_state.pages = pages
-                st.session_state.chunks = chunks
-                st.session_state.index = index
+            bar = st.progress(
+                0.0,
+                text=f"Building AI search index (0/{len(chunks)} chunks)...",
+            )
 
-                reset_document_outputs()
+            def show_progress(done, total):
+                bar.progress(
+                    done / total,
+                    text=(
+                        "Building AI search index "
+                        f"({done}/{total} chunks)..."
+                    ),
+                )
+
+            index = build_index(chunks, progress=show_progress)
+
+            bar.empty()
+
+            st.session_state.file_hash = current_hash
+            st.session_state.file_name = uploaded.name
+            st.session_state.text = pages_to_text(page_list)
+            st.session_state.pages = pages
+            st.session_state.chunks = chunks
+            st.session_state.chunk_pages = chunk_pages
+            st.session_state.page_texts = dict(page_list)
+            st.session_state.embeddings = get_embeddings(index)
+            st.session_state.index = index
+
+            reset_document_outputs()
 
         except Exception as e:
 
@@ -328,6 +363,24 @@ col4.metric(
     "☁️ Cloud AI",
     "Ready" if online else "Unavailable",
 )
+
+if st.session_state.pages > 30:
+
+    coverage = st.radio(
+        "🔎 Coverage for Summary and Important Topics",
+        list(COVERAGE_CHARS),
+        horizontal=True,
+        help=(
+            "Big PDFs cannot be read fully in one go. The AI reads "
+            "passages picked evenly from the WHOLE document. "
+            "Fast is quickest; Thorough reads more of the PDF but "
+            "takes longer. Ask AI always searches every page."
+        ),
+    )
+
+else:
+
+    coverage = "Fast"
 
 
 st.markdown("---")
@@ -407,13 +460,47 @@ with tabs[0]:
                         question,
                         st.session_state.index,
                         st.session_state.chunks,
-                        k=5,
+                        k=8,
                     )
 
-                    context = "\n\n".join(
-                        m["text"]
-                        for m in matches
+                    # Pages the student names ("page 450") are read
+                    # directly, because semantic search can miss them.
+                    named_pages = find_page_references(
+                        question,
+                        st.session_state.pages,
                     )
+
+                    parts = []
+
+                    for number in named_pages[:2]:
+
+                        body = st.session_state.page_texts.get(
+                            number,
+                            "",
+                        )
+
+                        if body:
+
+                            parts.append(
+                                f"[Page {number}]\n"
+                                f"{body[:PAGE_CONTEXT_CHARS]}"
+                            )
+
+                    for m in matches:
+
+                        label = page_label(
+                            st.session_state.chunk_pages[
+                                m["chunk_id"]
+                            ]
+                        )
+
+                        m["label"] = label
+
+                        parts.append(
+                            f"{label}\n{m['text']}"
+                        )
+
+                    context = "\n\n".join(parts)
 
                     answer = answer_question(
                         question,
@@ -438,6 +525,7 @@ with tabs[0]:
 
                         st.markdown(
                             f"**Match {i} — "
+                            f"{match['label']} — "
                             f"similarity "
                             f"{match['score']:.3f}**"
                         )
@@ -487,8 +575,8 @@ with tabs[1]:
 
                     st.session_state.summary = (
                         summarize_material(
-                            context_for_general_task(
-                                st.session_state.text
+                            document_overview(
+                                COVERAGE_CHARS[coverage]
                             ),
                             model_name,
                             base_url,
@@ -541,8 +629,8 @@ with tabs[2]:
 
                     st.session_state.topics = (
                         extract_topics(
-                            context_for_general_task(
-                                st.session_state.text
+                            document_overview(
+                                COVERAGE_CHARS[coverage]
                             ),
                             model_name,
                             base_url,
@@ -596,10 +684,7 @@ with tabs[3]:
                 ):
 
                     quiz = make_quiz(
-                        context_for_general_task(
-                            st.session_state.text,
-                            14000,
-                        ),
+                        document_overview(12000),
                         model_name,
                         base_url,
                         quiz_count,
@@ -788,10 +873,7 @@ with tabs[4]:
 
                     st.session_state.flashcards = (
                         make_flashcards(
-                            context_for_general_task(
-                                st.session_state.text,
-                                14000,
-                            ),
+                            document_overview(12000),
                             model_name,
                             base_url,
                         )
@@ -845,10 +927,7 @@ with tabs[5]:
 
             topic_context = (
                 st.session_state.topics
-                or context_for_general_task(
-                    st.session_state.text,
-                    7000,
-                )
+                or document_overview(7000)
             )
 
             try:

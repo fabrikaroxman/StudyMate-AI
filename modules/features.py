@@ -9,6 +9,10 @@ MAX_CHARS = 12000
 # mid-way, which then fails to parse.
 QUIZ_MAX_TOKENS = 3000
 
+# Question answering gets a slightly larger budget: retrieval over a big
+# PDF returns several passages from different pages.
+QA_MAX_CHARS = 14000
+
 
 def _split_text(text, max_chars=MAX_CHARS):
     """Split very large study material into safe batches."""
@@ -168,7 +172,7 @@ def _clean_questions(raw, count):
 def answer_question(question, context, level, model, base_url):
     # RAG already supplies relevant context here,
     # so keep only a safe amount.
-    context = (context or "")[:MAX_CHARS]
+    context = (context or "")[:QA_MAX_CHARS]
 
     prompt = f"""
 You are StudyMate AI, an academic learning assistant.
@@ -180,6 +184,11 @@ Rules:
 3. Do not invent facts.
 4. Keep the answer clear and useful for a student.
 5. Explanation level: {level}
+6. The material is made of passages, each starting with a label such as
+   [Page 12] or [Pages 12-13]. When you use a passage, mention its page
+   like (p. 12) so the student can find it in the PDF.
+7. Passages may come from different parts of a large document; combine
+   them when the question needs it.
 
 STUDY MATERIAL:
 {context}
