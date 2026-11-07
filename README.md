@@ -90,6 +90,16 @@ Streamlit Community Cloud) can run without a local model.
 
 Never commit your API key to the repository.
 
+## Running the tests
+
+The tests cover text chunking and quiz validation and need no model, no
+internet and no PDF library:
+
+```bash
+pip install pytest
+python -m pytest
+```
+
 ## Suggested live demo
 
 1. Upload a text-based PDF.

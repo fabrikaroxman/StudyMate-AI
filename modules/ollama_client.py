@@ -6,6 +6,7 @@ import requests
 DEFAULT_BASE_URL = "http://localhost:11434"
 DEFAULT_MODEL = "gemma3:4b"
 GROQ_MODEL = "openai/gpt-oss-20b"
+DEFAULT_MAX_TOKENS = 1200
 
 
 class OllamaError(RuntimeError):
@@ -29,7 +30,12 @@ def using_cloud_ai():
     return bool(_get_groq_key())
 
 
-def _groq_generate(prompt, temperature=0.2, json_mode=False):
+def _groq_generate(
+    prompt,
+    temperature=0.2,
+    json_mode=False,
+    max_tokens=DEFAULT_MAX_TOKENS,
+):
     api_key = _get_groq_key()
 
     if not api_key:
@@ -53,7 +59,7 @@ def _groq_generate(prompt, temperature=0.2, json_mode=False):
             },
         ],
         "temperature": temperature,
-        "max_tokens": 1200,
+        "max_tokens": max_tokens,
     }
 
     if json_mode:
@@ -227,12 +233,14 @@ def generate_json(
     prompt,
     model=DEFAULT_MODEL,
     base_url=DEFAULT_BASE_URL,
+    max_tokens=DEFAULT_MAX_TOKENS,
 ):
     if using_cloud_ai():
         raw = _groq_generate(
             prompt,
             temperature=0.1,
             json_mode=True,
+            max_tokens=max_tokens,
         )
 
     else:

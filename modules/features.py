@@ -5,6 +5,10 @@ from .ollama_client import generate, generate_json
 # This keeps large PDFs from overflowing API/rate limits.
 MAX_CHARS = 12000
 
+# A quiz is long JSON; the default cloud output limit can cut it off
+# mid-way, which then fails to parse.
+QUIZ_MAX_TOKENS = 3000
+
 
 def _split_text(text, max_chars=MAX_CHARS):
     """Split very large study material into safe batches."""
@@ -56,6 +60,109 @@ def _sample_large_text(text, max_batches=6):
             indexes.append(index)
 
     return [chunks[i] for i in indexes]
+
+
+def _fit_batches(batches, limit=MAX_CHARS, separator="\n\n"):
+    """
+    Join batches into one string of at most `limit` characters.
+
+    Every batch gets an equal share, so material sampled from the start,
+    middle and end of a document is all represented. A plain
+    "\\n\\n".join(batches)[:limit] would silently drop the later batches.
+    """
+    batches = [b for b in (batches or []) if b]
+
+    if not batches:
+        return ""
+
+    joined = separator.join(batches)
+
+    if len(joined) <= limit:
+        return joined
+
+    share = max(1, (limit - len(separator) * (len(batches) - 1)) // len(batches))
+
+    return separator.join(batch[:share] for batch in batches)[:limit]
+
+
+def _to_answer_index(value, options):
+    """Turn whatever the model gave as an answer into a valid option index."""
+    if isinstance(value, bool):
+        return None
+
+    if isinstance(value, int):
+        index = value
+
+    elif isinstance(value, float) and value.is_integer():
+        index = int(value)
+
+    elif isinstance(value, str):
+        text = value.strip()
+
+        if text.lstrip("-").isdigit():
+            index = int(text)
+
+        elif len(text) == 1 and text.upper() in "ABCDEF":
+            index = "ABCDEF".index(text.upper())
+
+        elif text in options:
+            index = options.index(text)
+
+        else:
+            return None
+
+    else:
+        return None
+
+    return index if 0 <= index < len(options) else None
+
+
+def _clean_questions(raw, count):
+    """
+    Validate quiz JSON from the model. Malformed questions are dropped
+    instead of crashing the quiz or scoring it wrongly.
+    """
+    if isinstance(raw, dict):
+        raw = raw.get("questions", [])
+
+    if not isinstance(raw, list):
+        return []
+
+    cleaned = []
+
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+
+        question = str(item.get("question", "")).strip()
+        options = item.get("options")
+
+        if not question or not isinstance(options, list):
+            continue
+
+        options = [str(o).strip() for o in options if str(o).strip()]
+
+        if not 2 <= len(options) <= 6:
+            continue
+
+        answer = _to_answer_index(item.get("answer_index"), options)
+
+        if answer is None:
+            continue
+
+        cleaned.append(
+            {
+                "question": question,
+                "options": options,
+                "answer_index": answer,
+                "explanation": str(item.get("explanation", "")).strip(),
+            }
+        )
+
+        if len(cleaned) >= count:
+            break
+
+    return cleaned
 
 
 def answer_question(question, context, level, model, base_url):
@@ -124,10 +231,9 @@ DOCUMENT SECTION {number}/{len(batches)}:
 
         partial_summaries.append(result)
 
-    combined = "\n\n".join(partial_summaries)
-
-    # Keep final synthesis request controlled too.
-    combined = combined[:MAX_CHARS]
+    # Keep the final synthesis request controlled, but give every
+    # section summary an equal share so later sections are not dropped.
+    combined = _fit_batches(partial_summaries)
 
     final_prompt = f"""
 You are StudyMate AI.
@@ -191,8 +297,7 @@ MATERIAL:
 
         topic_results.append(result)
 
-    combined = "\n\n".join(topic_results)
-    combined = combined[:MAX_CHARS]
+    combined = _fit_batches(topic_results)
 
     final_prompt = f"""
 From the topic analyses below, identify the 10 most important
@@ -224,8 +329,7 @@ TOPIC ANALYSES:
 def make_flashcards(text, model, base_url):
     batches = _sample_large_text(text, max_batches=4)
 
-    material = "\n\n".join(batches)
-    material = material[:MAX_CHARS]
+    material = _fit_batches(batches)
 
     prompt = f"""
 Create 10 revision flashcards from the supplied study material.
@@ -260,8 +364,7 @@ MATERIAL:
 def make_quiz(text, model, base_url, count=5):
     batches = _sample_large_text(text, max_batches=4)
 
-    material = "\n\n".join(batches)
-    material = material[:MAX_CHARS]
+    material = _fit_batches(batches)
 
     prompt = f"""
 Create exactly {count} multiple-choice questions
@@ -301,11 +404,10 @@ MATERIAL:
         prompt,
         model=model,
         base_url=base_url,
+        max_tokens=QUIZ_MAX_TOKENS,
     )
 
-    questions = data.get("questions", [])
-
-    return questions[:count]
+    return _clean_questions(data, count)
 
 
 def create_study_plan(
