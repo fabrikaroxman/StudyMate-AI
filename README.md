@@ -88,7 +88,29 @@ Streamlit Community Cloud) can run without a local model.
 
 - On Streamlit Community Cloud: add `GROQ_API_KEY` under the app's Secrets.
 
-Never commit your API key to the repository.
+Never commit your API key to the repository. A template is provided in
+`.streamlit/secrets.toml.example`.
+
+## Deploy and share a link (Streamlit Community Cloud)
+
+1. Get a free API key at <https://console.groq.com>.
+2. Go to <https://share.streamlit.io>, sign in with GitHub and choose
+   **Create app**.
+3. Repository: `fabrikaroxman/StudyMate-AI`, branch `main`,
+   main file path `app.py`.
+4. Open **Advanced settings**, pick Python 3.12, and paste this into
+   **Secrets**:
+
+   ```toml
+   GROQ_API_KEY = "your-key-here"
+   ```
+
+5. Click **Deploy**. You get a public `https://<name>.streamlit.app` link
+   to share.
+
+Anyone with the link uses your Groq quota. If the app runs out of memory on
+the free tier, check the app logs: `sentence-transformers` and `faiss-cpu`
+are the heaviest dependencies.
 
 ## Running the tests
 
