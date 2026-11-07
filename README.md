@@ -1,4 +1,3 @@
-\
 # StudyMate AI
 
 A laptop-only AI/ML Engineers' Day project.
@@ -54,7 +53,8 @@ If your laptop has limited RAM, use:
 ollama pull gemma3:1b
 ```
 
-Then set `gemma3:1b` in the app sidebar.
+Then change `DEFAULT_MODEL` to `"gemma3:1b"` in `modules/ollama_client.py`
+(the app's sidebar is hidden, so the model is set in code).
 
 The first SentenceTransformer model download also requires internet.
 After the models are downloaded, the main project can run locally.
@@ -72,6 +72,23 @@ Or on Windows, double-click:
 ```text
 run_windows.bat
 ```
+
+## Optional: cloud AI with Groq (no Ollama needed)
+
+If a `GROQ_API_KEY` is available, the app uses Groq's `openai/gpt-oss-20b`
+model instead of local Ollama. This is how a hosted deployment (for example
+Streamlit Community Cloud) can run without a local model.
+
+- Locally: set the `GROQ_API_KEY` environment variable, or add it to
+  `.streamlit/secrets.toml`:
+
+  ```toml
+  GROQ_API_KEY = "your-key-here"
+  ```
+
+- On Streamlit Community Cloud: add `GROQ_API_KEY` under the app's Secrets.
+
+Never commit your API key to the repository.
 
 ## Suggested live demo
 
@@ -96,4 +113,16 @@ Tagline: **Upload. Understand. Practice. Improve.**
 - For a stronger demo, use a 10–30 page PDF with clear text.
 
 ## Android app (Flutter)
-The Flutter mobile app is in this repository alongside the Streamlit app. To build an Android APK, install Flutter and run `flutter build apk --release` from the Flutter project directory.
+
+The Flutter app (`lib/main.dart`, `android/`) is a thin wrapper: it opens the
+deployed Streamlit app in a WebView. It does not run any AI itself, so it only
+works while that deployment is online. To point it at your own deployment,
+change the URL in `lib/main.dart`.
+
+To build an APK, install Flutter (a version supporting Dart SDK `^3.13.3`)
+and run this from the repository root:
+
+```bash
+flutter pub get
+flutter build apk --release
+```
